@@ -13,6 +13,7 @@ const app = (0, express_1.default)();
 const port = Number(process.env.PORT ?? 4000);
 const mongoUri = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/user_management';
 const jwtSecret = process.env.JWT_SECRET;
+let mongoConnection = null;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 if (!jwtSecret) {
     throw new Error('JWT_SECRET must be set in the environment.');
@@ -36,6 +37,24 @@ const publicUser = (user) => ({
 });
 app.use((0, cors_1.default)({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
 app.use(express_1.default.json({ limit: '20kb' }));
+app.use(async (_req, res, next) => {
+    try {
+        if (mongoose_1.default.connection.readyState !== 1) {
+            if (mongoose_1.default.connection.readyState !== 2 || !mongoConnection) {
+                mongoConnection = mongoose_1.default.connect(mongoUri).catch((error) => {
+                    mongoConnection = null;
+                    throw error;
+                });
+            }
+            await mongoConnection;
+        }
+        next();
+    }
+    catch (error) {
+        console.error('Unable to connect to MongoDB.', error);
+        res.status(503).json({ message: 'The database is temporarily unavailable.' });
+    }
+});
 const requireText = (value, field, maxLength = 80) => {
     if (typeof value !== 'string' || !value.trim() || value.trim().length > maxLength) {
         return `${field} is required and must be at most ${maxLength} characters.`;
@@ -207,11 +226,12 @@ app.use((error, _req, res, _next) => {
     }
     res.status(500).json({ message: 'An unexpected server error occurred.' });
 });
-const start = async () => {
-    await mongoose_1.default.connect(mongoUri);
-    app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
-};
-start().catch((error) => {
-    console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
-    process.exit(1);
-});
+if (!process.env.VERCEL) {
+    mongoose_1.default.connect(mongoUri).then(() => {
+        app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
+    }).catch((error) => {
+        console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
+        process.exit(1);
+    });
+}
+exports.default = app;
