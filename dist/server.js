@@ -9,11 +9,11 @@ const cors_1 = __importDefault(require("cors"));
 const express_1 = __importDefault(require("express"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const mongoose_1 = __importDefault(require("mongoose"));
+const userDirectory_1 = require("./userDirectory");
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT ?? 4000);
 const mongoUri = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/user_management';
 const jwtSecret = process.env.JWT_SECRET;
-let mongoConnection = null;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 if (!jwtSecret) {
     throw new Error('JWT_SECRET must be set in the environment.');
@@ -37,24 +37,6 @@ const publicUser = (user) => ({
 });
 app.use((0, cors_1.default)({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
 app.use(express_1.default.json({ limit: '20kb' }));
-app.use(async (_req, res, next) => {
-    try {
-        if (mongoose_1.default.connection.readyState !== 1) {
-            if (mongoose_1.default.connection.readyState !== 2 || !mongoConnection) {
-                mongoConnection = mongoose_1.default.connect(mongoUri).catch((error) => {
-                    mongoConnection = null;
-                    throw error;
-                });
-            }
-            await mongoConnection;
-        }
-        next();
-    }
-    catch (error) {
-        console.error('Unable to connect to MongoDB.', error);
-        res.status(503).json({ message: 'The database is temporarily unavailable.' });
-    }
-});
 const requireText = (value, field, maxLength = 80) => {
     if (typeof value !== 'string' || !value.trim() || value.trim().length > maxLength) {
         return `${field} is required and must be at most ${maxLength} characters.`;
@@ -162,10 +144,31 @@ app.get('/api/profile', authenticate, async (req, res) => {
         res.status(500).json({ message: 'Unable to load your profile right now.' });
     }
 });
-app.get('/api/users', authenticate, async (_req, res) => {
+app.get('/api/users', authenticate, async (req, res) => {
     try {
-        const users = await User.find().sort({ createdAt: -1 });
-        res.json({ users: users.map(publicUser) });
+        const parsed = (0, userDirectory_1.parseUserDirectoryQuery)(req.query);
+        if (!parsed.valid) {
+            res.status(400).json({ message: parsed.message });
+            return;
+        }
+        const filter = {};
+        if (parsed.query.status)
+            filter.status = parsed.query.status;
+        const terms = (0, userDirectory_1.toSearchRegexes)(parsed.query.search);
+        if (terms.length) {
+            filter.$and = terms.map((term) => ({
+                $or: [{ firstName: term }, { lastName: term }, { email: term }],
+            }));
+        }
+        const skip = (parsed.query.page - 1) * parsed.query.pageSize;
+        const [users, total] = await Promise.all([
+            User.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(parsed.query.pageSize),
+            User.countDocuments(filter),
+        ]);
+        res.json({
+            users: users.map(publicUser),
+            pagination: { page: parsed.query.page, pageSize: parsed.query.pageSize, total, totalPages: Math.ceil(total / parsed.query.pageSize) },
+        });
     }
     catch {
         res.status(500).json({ message: 'Unable to load users right now.' });
@@ -201,7 +204,7 @@ app.put('/api/users/:id', authenticate, async (req, res) => {
         res.status(400).json({ message: firstNameError ?? lastNameError ?? 'Enter a valid email address.' });
         return;
     }
-    if (status !== 'Active' && status !== 'Inactive') {
+    if (!(0, userDirectory_1.isUserStatus)(status)) {
         res.status(400).json({ message: 'Status must be Active or Inactive.' });
         return;
     }
@@ -226,12 +229,11 @@ app.use((error, _req, res, _next) => {
     }
     res.status(500).json({ message: 'An unexpected server error occurred.' });
 });
-if (!process.env.VERCEL) {
-    mongoose_1.default.connect(mongoUri).then(() => {
-        app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
-    }).catch((error) => {
-        console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
-        process.exit(1);
-    });
-}
-exports.default = app;
+const start = async () => {
+    await mongoose_1.default.connect(mongoUri);
+    app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
+};
+start().catch((error) => {
+    console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
+    process.exit(1);
+});

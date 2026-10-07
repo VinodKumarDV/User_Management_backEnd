@@ -4,12 +4,12 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import mongoose, { type HydratedDocument } from 'mongoose';
+import { isUserStatus, parseUserDirectoryQuery, toSearchRegexes } from './userDirectory';
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
 const mongoUri = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/user_management';
 const jwtSecret = process.env.JWT_SECRET;
-let mongoConnection: Promise<typeof mongoose> | null = null;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 if (!jwtSecret) {
@@ -62,23 +62,6 @@ const publicUser = (user: HydratedDocument<UserRecord>) => ({
 
 app.use(cors({ origin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173' }));
 app.use(express.json({ limit: '20kb' }));
-app.use(async (_req: Request, res: Response, next: NextFunction) => {
-    try {
-        if (mongoose.connection.readyState !== 1) {
-            if (mongoose.connection.readyState !== 2 || !mongoConnection) {
-                mongoConnection = mongoose.connect(mongoUri).catch((error: unknown) => {
-                    mongoConnection = null;
-                    throw error;
-                });
-            }
-            await mongoConnection;
-        }
-        next();
-    } catch (error) {
-        console.error('Unable to connect to MongoDB.', error);
-        res.status(503).json({ message: 'The database is temporarily unavailable.' });
-    }
-});
 
 const requireText = (value: unknown, field: string, maxLength = 80): string | null => {
     if (typeof value !== 'string' || !value.trim() || value.trim().length > maxLength) {
@@ -190,10 +173,32 @@ app.get('/api/profile', authenticate, async (req: AuthRequest, res: Response) =>
     }
 });
 
-app.get('/api/users', authenticate, async (_req: AuthRequest, res: Response) => {
+app.get('/api/users', authenticate, async (req: AuthRequest, res: Response) => {
     try {
-        const users = await User.find().sort({ createdAt: -1 });
-        res.json({ users: users.map(publicUser) });
+        const parsed = parseUserDirectoryQuery(req.query);
+        if (!parsed.valid) {
+            res.status(400).json({ message: parsed.message });
+            return;
+        }
+
+        const filter: mongoose.FilterQuery<UserRecord> = {};
+        if (parsed.query.status) filter.status = parsed.query.status;
+        const terms = toSearchRegexes(parsed.query.search);
+        if (terms.length) {
+            filter.$and = terms.map((term) => ({
+                $or: [{ firstName: term }, { lastName: term }, { email: term }],
+            }));
+        }
+
+        const skip = (parsed.query.page - 1) * parsed.query.pageSize;
+        const [users, total] = await Promise.all([
+            User.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(parsed.query.pageSize),
+            User.countDocuments(filter),
+        ]);
+        res.json({
+            users: users.map(publicUser),
+            pagination: { page: parsed.query.page, pageSize: parsed.query.pageSize, total, totalPages: Math.ceil(total / parsed.query.pageSize) },
+        });
     } catch {
         res.status(500).json({ message: 'Unable to load users right now.' });
     }
@@ -229,7 +234,7 @@ app.put('/api/users/:id', authenticate, async (req: Request<{ id: string }, unkn
         res.status(400).json({ message: firstNameError ?? lastNameError ?? 'Enter a valid email address.' });
         return;
     }
-    if (status !== 'Active' && status !== 'Inactive') {
+    if (!isUserStatus(status)) {
         res.status(400).json({ message: 'Status must be Active or Inactive.' });
         return;
     }
@@ -259,13 +264,12 @@ app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => {
     res.status(500).json({ message: 'An unexpected server error occurred.' });
 });
 
-if (!process.env.VERCEL) {
-    mongoose.connect(mongoUri).then(() => {
-        app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
-    }).catch((error: unknown) => {
-        console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
-        process.exit(1);
-    });
-}
+const start = async () => {
+    await mongoose.connect(mongoUri);
+    app.listen(port, () => console.log(`User API listening on http://localhost:${port}`));
+};
 
-export default app;
+start().catch((error: unknown) => {
+    console.error('Unable to start the API. Check MONGODB_URI and database availability.', error);
+    process.exit(1);
+});
