@@ -9,6 +9,7 @@ const cors_1 = __importDefault(require("cors"));
 const express_1 = __importDefault(require("express"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const mongoose_1 = __importDefault(require("mongoose"));
+const User_1 = require("./models/User");
 const userDirectory_1 = require("./userDirectory");
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT ?? 4000);
@@ -18,14 +19,6 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 if (!jwtSecret) {
     throw new Error('JWT_SECRET must be set in the environment.');
 }
-const userSchema = new mongoose_1.default.Schema({
-    firstName: { type: String, required: true, trim: true },
-    lastName: { type: String, required: true, trim: true },
-    email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-    password: { type: String, required: true, select: false },
-    status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
-}, { timestamps: true });
-const User = mongoose_1.default.model('User', userSchema);
 const publicUser = (user) => ({
     id: user.id,
     firstName: user.firstName,
@@ -88,12 +81,12 @@ app.post('/api/register', async (req, res) => {
         return;
     }
     try {
-        const existingUser = await User.exists({ email });
+        const existingUser = await User_1.User.exists({ email });
         if (existingUser) {
             res.status(409).json({ message: 'An account with this email already exists.' });
             return;
         }
-        const user = await User.create({
+        const user = await User_1.User.create({
             firstName: firstName.trim(),
             lastName: lastName.trim(),
             email,
@@ -115,7 +108,7 @@ app.post('/api/login', async (req, res) => {
         return;
     }
     try {
-        const user = await User.findOne({ email }).select('+password');
+        const user = await User_1.User.findOne({ email }).select('+password');
         if (!user || !(await bcryptjs_1.default.compare(password, user.password))) {
             res.status(401).json({ message: 'Email or password is incorrect.' });
             return;
@@ -133,7 +126,7 @@ app.post('/api/login', async (req, res) => {
 });
 app.get('/api/profile', authenticate, async (req, res) => {
     try {
-        const user = await User.findById(req.userId);
+        const user = await User_1.User.findById(req.userId);
         if (!user) {
             res.status(404).json({ message: 'User not found.' });
             return;
@@ -162,8 +155,8 @@ app.get('/api/users', authenticate, async (req, res) => {
         }
         const skip = (parsed.query.page - 1) * parsed.query.pageSize;
         const [users, total] = await Promise.all([
-            User.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(parsed.query.pageSize),
-            User.countDocuments(filter),
+            User_1.User.find(filter).sort({ createdAt: -1, _id: -1 }).skip(skip).limit(parsed.query.pageSize),
+            User_1.User.countDocuments(filter),
         ]);
         res.json({
             users: users.map(publicUser),
@@ -180,7 +173,7 @@ app.get('/api/users/:id', authenticate, async (req, res) => {
         return;
     }
     try {
-        const user = await User.findById(req.params.id);
+        const user = await User_1.User.findById(req.params.id);
         if (!user) {
             res.status(404).json({ message: 'User not found.' });
             return;
@@ -209,7 +202,7 @@ app.put('/api/users/:id', authenticate, async (req, res) => {
         return;
     }
     try {
-        const user = await User.findByIdAndUpdate(req.params.id, { firstName: firstName.trim(), lastName: lastName.trim(), email, status }, { new: true, runValidators: true });
+        const user = await User_1.User.findByIdAndUpdate(req.params.id, { firstName: firstName.trim(), lastName: lastName.trim(), email, status }, { new: true, runValidators: true });
         if (!user) {
             res.status(404).json({ message: 'User not found.' });
             return;

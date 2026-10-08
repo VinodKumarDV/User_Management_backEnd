@@ -4,6 +4,7 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import jwt from 'jsonwebtoken';
 import mongoose, { type HydratedDocument } from 'mongoose';
+import { User, type UserRecord } from './models/User';
 import { isUserStatus, parseUserDirectoryQuery, toSearchRegexes } from './userDirectory';
 
 const app = express();
@@ -14,16 +15,6 @@ const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 if (!jwtSecret) {
     throw new Error('JWT_SECRET must be set in the environment.');
-}
-
-interface UserRecord {
-    firstName: string;
-    lastName: string;
-    email: string;
-    password: string;
-    status: 'Active' | 'Inactive';
-    createdAt: Date;
-    updatedAt: Date;
 }
 
 interface AuthRequest extends Request {
@@ -38,18 +29,6 @@ interface UserInput {
     status?: unknown;
 }
 
-const userSchema = new mongoose.Schema<UserRecord>(
-    {
-        firstName: { type: String, required: true, trim: true },
-        lastName: { type: String, required: true, trim: true },
-        email: { type: String, required: true, unique: true, lowercase: true, trim: true },
-        password: { type: String, required: true, select: false },
-        status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
-    },
-    { timestamps: true },
-);
-
-const User = mongoose.model<UserRecord>('User', userSchema);
 const publicUser = (user: HydratedDocument<UserRecord>) => ({
     id: user.id,
     firstName: user.firstName,

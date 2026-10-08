@@ -6,21 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const mongoose_1 = __importDefault(require("mongoose"));
+const User_1 = require("./models/User");
 const mongoUri = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/user_management';
-const seedSchema = new mongoose_1.default.Schema({
-    firstName: { type: String, required: true },
-    lastName: { type: String, required: true },
-    email: { type: String, required: true, unique: true, lowercase: true },
-    password: { type: String, required: true, select: false },
-    status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
-}, { timestamps: true });
-const User = mongoose_1.default.model('User', seedSchema);
 const seed = async () => {
     await mongoose_1.default.connect(mongoUri);
     const email = 'vinod@gmail.com';
-    const existingUser = await User.exists({ email });
+    const existingUser = await User_1.User.exists({ email });
     if (!existingUser) {
-        await User.create({
+        await User_1.User.create({
             firstName: 'Vinod',
             lastName: 'Kumar',
             email,

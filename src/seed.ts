@@ -1,19 +1,9 @@
 import 'dotenv/config';
 import bcrypt from 'bcryptjs';
 import mongoose from 'mongoose';
+import { User } from './models/User';
 
 const mongoUri = process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/user_management';
-const seedSchema = new mongoose.Schema(
-    {
-        firstName: { type: String, required: true },
-        lastName: { type: String, required: true },
-        email: { type: String, required: true, unique: true, lowercase: true },
-        password: { type: String, required: true, select: false },
-        status: { type: String, enum: ['Active', 'Inactive'], default: 'Active' },
-    },
-    { timestamps: true },
-);
-const User = mongoose.model('User', seedSchema);
 
 const seed = async () => {
     await mongoose.connect(mongoUri);
